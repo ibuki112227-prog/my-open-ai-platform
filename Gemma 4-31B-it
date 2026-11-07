@@ -1,0 +1,80 @@
+# 1. 必要なライブラリのインストール
+!pip install -q transformers accelerate torch torchvision gradio bitsandbytes huggingface_hub
+
+import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig, pipeline
+import gradio as gr
+from huggingface_hub import login
+
+# 【重要】Hugging Faceのアクセストークンを入力してログインする場合（必要に応じてコメントアウトを外してください）
+# token = "あなたのHuggingFaceアクセストークン"
+# login(token)
+
+# 2. Gemma 4-31B-it を 4bit量子化 で読み込み
+print("🤖 Gemma 4-31B-it (4bit) をロード中... (数分かかります)")
+model_id = "google/gemma-4-31B-it"
+
+# 4bit量子化の設定（VRAMを節約して約22〜25GB前後に収める）
+quantization_config = BitsAndBytesConfig(
+    load_in_4bit=True,
+    bnb_4bit_compute_dtype=torch.bfloat16,
+    bnb_4bit_quant_type="nf4"
+)
+
+tokenizer = AutoTokenizer.from_pretrained(model_id)
+
+model = AutoModelForCausalLM.from_pretrained(
+    model_id,
+    quantization_config=quantization_config,
+    device_map="auto"
+)
+
+# パイプラインの作成
+pipe = pipeline("text-generation", model=model, tokenizer=tokenizer)
+print("✨ Gemma 4-31B-it (4bit) のロードが完了しました！")
+
+# 3. チャット処理の関数
+def chat_with_open_ai(message, history):
+    messages = []
+    for user_msg, bot_msg in history:
+        messages.append({"role": "user", "content": user_msg})
+        messages.append({"role": "assistant", "content": bot_msg})
+    
+    messages.append({"role": "user", "content": message})
+    
+    prompt = tokenizer.apply_chat_template(
+        messages, 
+        tokenize=False, 
+        add_generation_prompt=True
+    )
+    
+    outputs = pipe(
+        prompt, 
+        max_new_tokens=512, 
+        do_sample=True, 
+        temperature=0.7,
+        top_p=0.9
+    )
+    
+    generated_text = outputs[0]["generated_text"]
+    response = generated_text[len(prompt):].strip()
+    
+    return response
+
+# 4. Gradio UIの構築
+with gr.Blocks() as demo:
+    gr.Markdown("# 💎 Gemma 4-31B-it (4bit) Private Platform")
+    gr.Markdown("Google製の最高峰オープンモデル（31B）を4bit量子化でプライベート展開しています。高度な対話をどうぞ！")
+    
+    gr.ChatInterface(
+        fn=chat_with_open_ai,
+        textbox=gr.Textbox(placeholder="メッセージを入力...", container=False, scale=7)
+    )
+
+# 5. 起動（パスワード認証付き：必要に応じてIDとパスワードを変更してください）
+demo.launch(
+    share=True, 
+    debug=True, 
+    theme=gr.themes.Monochrome(),
+    auth=("your_username", "your_password")
+)
